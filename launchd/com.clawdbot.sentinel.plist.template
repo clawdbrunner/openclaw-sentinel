@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.clawdbot.sentinel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{{SENTINEL_DIR}}/health-check.sh</string>
+    </array>
+
+    <!-- Run every CHECK_INTERVAL seconds -->
+    <key>StartInterval</key>
+    <integer>{{CHECK_INTERVAL}}</integer>
+
+    <!-- Start immediately when loaded -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Log output -->
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/launchd-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/launchd-stderr.log</string>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>{{HOME}}/.clawdbot</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:{{HOME}}/.local/bin</string>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+        <key>SENTINEL_DIR</key>
+        <string>{{SENTINEL_DIR}}</string>
+        <key>CONFIG_FILE</key>
+        <string>{{CONFIG_FILE}}</string>
+    </dict>
+
+    <!-- Don't restart immediately if it exits -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

@@ -1,0 +1,67 @@
+# Clawdbot Sentinel Configuration
+# Copy this file to ~/.clawdbot/sentinel.conf and customize as needed
+
+# =============================================================================
+# MONITORING SETTINGS
+# =============================================================================
+
+# Health check interval in seconds (default: 300 = 5 minutes)
+CHECK_INTERVAL=300
+
+# Gateway URL to monitor
+GATEWAY_URL="http://127.0.0.1:18789"
+
+# Seconds to wait before confirming gateway is down (avoids false positives)
+CONFIRMATION_DELAY=5
+
+# Timeout for health check HTTP requests (seconds)
+CURL_TIMEOUT=10
+
+# =============================================================================
+# CLAUDE CODE SETTINGS
+# =============================================================================
+
+# Maximum USD to spend per repair attempt
+MAX_BUDGET_USD=2.00
+
+# Maximum Claude Code turns per repair attempt
+MAX_TURNS=20
+
+# Tools Claude Code is allowed to use for repairs
+# Available: Bash, Read, Edit, Write, Glob, Grep, WebFetch, WebSearch
+ALLOWED_TOOLS="Bash,Read,Edit,Glob,Grep,WebFetch"
+
+# Claude Code model (optional, uses default if not set)
+# Options: claude-sonnet-4-20250514, claude-opus-4-5-20251101
+# MODEL="claude-sonnet-4-20250514"
+
+# =============================================================================
+# LOCK FILE SETTINGS
+# =============================================================================
+
+# Maximum age of lock file before considering it stale (seconds)
+# If a repair takes longer than this, the lock is cleared
+MAX_LOCK_AGE=1800
+
+# =============================================================================
+# LOGGING SETTINGS
+# =============================================================================
+
+# Log directory (default: ~/.clawdbot/sentinel/logs)
+# LOG_DIR="$HOME/.clawdbot/sentinel/logs"
+
+# Keep logs for this many days (0 = keep forever)
+LOG_RETENTION_DAYS=30
+
+# =============================================================================
+# ADVANCED SETTINGS
+# =============================================================================
+
+# Additional system prompt to append to Claude Code
+# ADDITIONAL_PROMPT=""
+
+# Custom path to clawdbot binary (auto-detected if not set)
+# CLAWDBOT_BIN="/usr/local/bin/clawdbot"
+
+# Custom path to claude binary (auto-detected if not set)
+# CLAUDE_BIN="/usr/local/bin/claude"
