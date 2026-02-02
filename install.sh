@@ -1,5 +1,5 @@
 #!/bin/bash
-# Clawdbot Sentinel Installer
+# OpenClaw Sentinel Installer
 # Installs and configures the Sentinel health monitoring system
 
 set -euo pipefail
@@ -13,10 +13,15 @@ NC='\033[0m' # No Color
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SENTINEL_DIR="$HOME/.clawdbot/sentinel"
-CONFIG_FILE="$HOME/.clawdbot/sentinel.conf"
+SENTINEL_DIR="$HOME/.openclaw/sentinel"
+CONFIG_FILE="$HOME/.openclaw/sentinel.conf"
 LOG_DIR="$SENTINEL_DIR/logs"
-LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.clawdbot.sentinel.plist"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.plist"
+
+# Legacy paths (for migration)
+LEGACY_SENTINEL_DIR="$HOME/.clawdbot/sentinel"
+LEGACY_CONFIG_FILE="$HOME/.clawdbot/sentinel.conf"
+LEGACY_LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.clawdbot.sentinel.plist"
 
 # Default settings
 DEFAULT_CHECK_INTERVAL=300
@@ -25,7 +30,7 @@ DEFAULT_MAX_TURNS=20
 
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║                   Clawdbot Sentinel Installer                 ║"
+echo "║                   OpenClaw Sentinel Installer                 ║"
 echo "║         Automated health monitoring with Claude Code          ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
@@ -43,13 +48,20 @@ if [ "$(uname)" != "Darwin" ]; then
     exit 1
 fi
 
-# Check for clawdbot
-if ! command -v clawdbot &> /dev/null; then
-    echo -e "${RED}Error: clawdbot not found${NC}"
-    echo "Please install Clawdbot first: https://docs.clawd.bot/"
+# Check for openclaw (or clawdbot as fallback)
+OPENCLAW_CMD=""
+if command -v openclaw &> /dev/null; then
+    OPENCLAW_CMD="openclaw"
+    echo -e "${GREEN}✓${NC} OpenClaw found: $(which openclaw)"
+elif command -v clawdbot &> /dev/null; then
+    OPENCLAW_CMD="clawdbot"
+    echo -e "${YELLOW}!${NC} Using legacy clawdbot CLI: $(which clawdbot)"
+    echo "  Consider updating: npm install -g openclaw"
+else
+    echo -e "${RED}Error: openclaw not found${NC}"
+    echo "Please install OpenClaw first: https://docs.openclaw.ai/"
     exit 1
 fi
-echo -e "${GREEN}✓${NC} Clawdbot found: $(which clawdbot)"
 
 # Check for claude
 if ! command -v claude &> /dev/null; then
@@ -59,17 +71,27 @@ if ! command -v claude &> /dev/null; then
 fi
 echo -e "${GREEN}✓${NC} Claude Code found: $(which claude)"
 
-# Check for existing installation
+# Check for existing installation (both new and legacy)
+NEED_REINSTALL=false
 if [ -f "$LAUNCHD_PLIST" ]; then
     echo -e "${YELLOW}Warning: Sentinel is already installed${NC}"
-    read -p "Do you want to reinstall? (y/N) " -n 1 -r
+    NEED_REINSTALL=true
+elif [ -f "$LEGACY_LAUNCHD_PLIST" ]; then
+    echo -e "${YELLOW}Warning: Legacy clawdbot-sentinel found, will migrate${NC}"
+    NEED_REINSTALL=true
+fi
+
+if [ "$NEED_REINSTALL" = true ]; then
+    read -p "Do you want to reinstall/migrate? (y/N) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         echo "Installation cancelled."
         exit 0
     fi
-    # Unload existing service
+    # Unload existing services
     launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+    launchctl unload "$LEGACY_LAUNCHD_PLIST" 2>/dev/null || true
+    rm -f "$LEGACY_LAUNCHD_PLIST"
 fi
 
 # =============================================================================
@@ -81,17 +103,32 @@ echo -e "${BLUE}Configuration${NC}"
 echo "Press Enter to accept defaults shown in brackets."
 echo ""
 
+# Migrate existing config if present
+if [ -f "$LEGACY_CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE" ]; then
+    echo -e "${YELLOW}Migrating config from legacy location...${NC}"
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    cp "$LEGACY_CONFIG_FILE" "$CONFIG_FILE"
+fi
+
+# Load existing values if config exists
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE" 2>/dev/null || true
+fi
+
 # Check interval
-read -p "Health check interval in seconds [$DEFAULT_CHECK_INTERVAL]: " CHECK_INTERVAL
-CHECK_INTERVAL=${CHECK_INTERVAL:-$DEFAULT_CHECK_INTERVAL}
+CURRENT_INTERVAL="${CHECK_INTERVAL:-$DEFAULT_CHECK_INTERVAL}"
+read -p "Health check interval in seconds [$CURRENT_INTERVAL]: " CHECK_INTERVAL
+CHECK_INTERVAL=${CHECK_INTERVAL:-$CURRENT_INTERVAL}
 
 # Max budget
-read -p "Maximum USD per repair attempt [$DEFAULT_MAX_BUDGET]: " MAX_BUDGET
-MAX_BUDGET=${MAX_BUDGET:-$DEFAULT_MAX_BUDGET}
+CURRENT_BUDGET="${MAX_BUDGET_USD:-$DEFAULT_MAX_BUDGET}"
+read -p "Maximum USD per repair attempt [$CURRENT_BUDGET]: " MAX_BUDGET
+MAX_BUDGET=${MAX_BUDGET:-$CURRENT_BUDGET}
 
 # Max turns
-read -p "Maximum Claude Code turns per repair [$DEFAULT_MAX_TURNS]: " MAX_TURNS
-MAX_TURNS=${MAX_TURNS:-$DEFAULT_MAX_TURNS}
+CURRENT_TURNS="${MAX_TURNS:-$DEFAULT_MAX_TURNS}"
+read -p "Maximum Claude Code turns per repair [$CURRENT_TURNS]: " MAX_TURNS
+MAX_TURNS=${MAX_TURNS:-$CURRENT_TURNS}
 
 # =============================================================================
 # INSTALLATION
@@ -112,12 +149,12 @@ chmod +x "$SENTINEL_DIR/health-check.sh"
 echo -e "${GREEN}✓${NC} Installed health check script"
 
 # Copy CLAUDE.md context file
-cp "$SCRIPT_DIR/config/CLAUDE.md" "$HOME/.clawdbot/CLAUDE.md"
+cp "$SCRIPT_DIR/config/CLAUDE.md" "$HOME/.openclaw/CLAUDE.md"
 echo -e "${GREEN}✓${NC} Installed CLAUDE.md context file"
 
 # Create configuration file
 cat > "$CONFIG_FILE" << EOF
-# Clawdbot Sentinel Configuration
+# OpenClaw Sentinel Configuration
 # Generated by installer on $(date)
 
 # Health check interval in seconds
@@ -152,7 +189,7 @@ sed -e "s|{{SENTINEL_DIR}}|$SENTINEL_DIR|g" \
     -e "s|{{HOME}}|$HOME|g" \
     -e "s|{{CHECK_INTERVAL}}|$CHECK_INTERVAL|g" \
     -e "s|{{CONFIG_FILE}}|$CONFIG_FILE|g" \
-    "$SCRIPT_DIR/launchd/com.clawdbot.sentinel.plist.template" > "$LAUNCHD_PLIST"
+    "$SCRIPT_DIR/launchd/ai.openclaw.sentinel.plist.template" > "$LAUNCHD_PLIST"
 echo -e "${GREEN}✓${NC} Created launchd service"
 
 # Load the service
@@ -176,24 +213,31 @@ if [[ ! $REPLY =~ ^[Nn]$ ]]; then
     fi
 
     if [ -n "$SHELL_RC" ]; then
-        # Check if already added
-        if ! grep -q "# Clawdbot Sentinel aliases" "$SHELL_RC" 2>/dev/null; then
+        # Remove old aliases if present
+        if grep -q "# Clawdbot Sentinel aliases" "$SHELL_RC" 2>/dev/null; then
+            # Remove the old block
+            sed -i.bak '/# Clawdbot Sentinel aliases/,/^$/d' "$SHELL_RC"
+            echo -e "${YELLOW}!${NC} Removed legacy Clawdbot Sentinel aliases"
+        fi
+
+        # Check if new aliases already added
+        if ! grep -q "# OpenClaw Sentinel aliases" "$SHELL_RC" 2>/dev/null; then
             cat >> "$SHELL_RC" << 'EOF'
 
-# Clawdbot Sentinel aliases
+# OpenClaw Sentinel aliases
 sentinel() {
     case "$1" in
         status)
-            launchctl list | grep sentinel && echo "" && tail -5 ~/.clawdbot/sentinel/logs/health.log
+            launchctl list | grep sentinel && echo "" && tail -5 ~/.openclaw/sentinel/logs/health.log
             ;;
         check)
-            ~/.clawdbot/sentinel/health-check.sh
+            ~/.openclaw/sentinel/health-check.sh
             ;;
         logs)
-            tail -f ~/.clawdbot/sentinel/logs/health.log
+            tail -f ~/.openclaw/sentinel/logs/health.log
             ;;
         repairs)
-            tail -f ~/.clawdbot/sentinel/logs/repairs.log
+            tail -f ~/.openclaw/sentinel/logs/repairs.log
             ;;
         *)
             echo "Usage: sentinel {status|check|logs|repairs}"
@@ -209,6 +253,16 @@ EOF
     else
         echo -e "${YELLOW}!${NC} Could not detect shell config file"
     fi
+fi
+
+# =============================================================================
+# CLEANUP LEGACY
+# =============================================================================
+
+# Remove legacy config if we migrated it
+if [ -f "$LEGACY_CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+    rm -f "$LEGACY_CONFIG_FILE"
+    echo -e "${GREEN}✓${NC} Cleaned up legacy config"
 fi
 
 # =============================================================================

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.clawdbot.sentinel</string>
+    <string>ai.openclaw.sentinel</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -27,7 +27,7 @@
 
     <!-- Working directory -->
     <key>WorkingDirectory</key>
-    <string>{{HOME}}/.clawdbot</string>
+    <string>{{HOME}}/.openclaw</string>
 
     <!-- Environment variables -->
     <key>EnvironmentVariables</key>

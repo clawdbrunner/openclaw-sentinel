@@ -1,5 +1,5 @@
 #!/bin/bash
-# Clawdbot Sentinel Health Check
+# OpenClaw Sentinel Health Check
 # Monitors gateway health and triggers Claude Code for automated repair when issues are detected
 
 set -euo pipefail
@@ -8,8 +8,8 @@ set -euo pipefail
 # CONFIGURATION
 # =============================================================================
 
-SENTINEL_DIR="${SENTINEL_DIR:-$HOME/.clawdbot/sentinel}"
-CONFIG_FILE="${CONFIG_FILE:-$HOME/.clawdbot/sentinel.conf}"
+SENTINEL_DIR="${SENTINEL_DIR:-$HOME/.openclaw/sentinel}"
+CONFIG_FILE="${CONFIG_FILE:-$HOME/.openclaw/sentinel.conf}"
 
 # Default values (can be overridden in sentinel.conf)
 CHECK_INTERVAL=300
@@ -35,6 +35,16 @@ mkdir -p "$LOG_DIR"
 LOCKFILE="$LOG_DIR/repair.lock"
 HEALTH_LOG="$LOG_DIR/health.log"
 REPAIR_LOG="$LOG_DIR/repairs.log"
+
+# Detect which CLI to use (openclaw preferred, clawdbot as fallback)
+if command -v openclaw &> /dev/null; then
+    OPENCLAW_CMD="openclaw"
+elif command -v clawdbot &> /dev/null; then
+    OPENCLAW_CMD="clawdbot"
+else
+    echo "Error: Neither openclaw nor clawdbot found in PATH" >&2
+    exit 1
+fi
 
 # =============================================================================
 # LOGGING
@@ -111,7 +121,7 @@ try_auto_fix() {
             log "Auto-fix: Detected missing env var '$var_name' at '$config_path'"
 
             # Check if the value exists in env.vars section of config
-            local config_file="$HOME/.clawdbot/clawdbot.json"
+            local config_file="$HOME/.openclaw/openclaw.json"
             if [ -f "$config_file" ]; then
                 local stored_value
                 stored_value=$(jq -r --arg var "$var_name" '.env.vars[$var] // empty' "$config_file" 2>/dev/null)
@@ -139,13 +149,13 @@ try_auto_fix() {
 
                         # Restart gateway
                         log "Auto-fix: Restarting gateway..."
-                        if launchctl kickstart -k "gui/$(id -u)/com.clawdbot.gateway" 2>/dev/null; then
+                        if launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
                             log "Auto-fix: Gateway restart triggered via launchctl"
                         else
                             # Fallback: try starting gateway directly
-                            pkill -f "clawdbot gateway" 2>/dev/null || true
+                            pkill -f 'openclaw gateway\|clawdbot gateway' 2>/dev/null || true
                             sleep 1
-                            nohup clawdbot gateway > /dev/null 2>&1 &
+                            nohup $OPENCLAW_CMD gateway > /dev/null 2>&1 &
                             log "Auto-fix: Gateway started directly"
                         fi
 
@@ -167,7 +177,7 @@ try_auto_fix() {
         if ! echo "$doctor_output" | grep -qi "config invalid\|error\|MissingEnvVar"; then
             log "Auto-fix: Gateway appears to just need a restart"
 
-            if launchctl kickstart -k "gui/$(id -u)/com.clawdbot.gateway" 2>/dev/null; then
+            if launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
                 log "Auto-fix: Gateway restart triggered via launchctl"
                 sleep 3
                 return 0
@@ -201,7 +211,7 @@ trigger_repair() {
 
     # Gather additional diagnostic information
     local process_state
-    process_state=$(ps aux | grep -E "(clawdbot|node)" | grep -v grep | head -20 || echo "No clawdbot/node processes found")
+    process_state=$(ps aux | grep -E "(openclaw|clawdbot|node)" | grep -v grep | head -20 || echo "No openclaw/clawdbot/node processes found")
 
     local port_state
     port_state=$(lsof -i :18789 2>/dev/null | head -10 || echo "No process on port 18789")
@@ -222,8 +232,8 @@ trigger_repair() {
 $doctor_tail"
     fi
 
-    # Change to clawdbot directory for context
-    cd "$HOME/.clawdbot"
+    # Change to openclaw directory for context
+    cd "$HOME/.openclaw"
 
     # Build Claude Code command
     local claude_cmd="claude"
@@ -242,11 +252,11 @@ $doctor_tail"
     prompt_file=$(mktemp)
 
     cat > "$prompt_file" << PROMPT_EOF
-The Clawdbot gateway is not responding and needs repair.
+The OpenClaw gateway is not responding and needs repair.
 
 ## Diagnostic Information
 
-### clawdbot doctor output (exit code: $doctor_exit):
+### $OPENCLAW_CMD doctor output (exit code: $doctor_exit):
 \`\`\`
 $doctor_output
 \`\`\`
@@ -268,13 +278,17 @@ $port_state
 4. If the fix doesn't work, try alternative approaches
 
 Common fixes:
-- Restart: \`clawdbot gateway\` (may need to run in background or via launchd)
-- Kill stuck process: \`pkill -f clawdbot\` then restart
-- Check config: \`~/.clawdbot/clawdbot.json\`
-- Reinstall service: \`clawdbot onboard --install-daemon\`
+- Restart: \`$OPENCLAW_CMD gateway\` (may need to run in background or via launchd)
+- Kill stuck process: \`pkill -f 'openclaw\|clawdbot'\` then restart
+- Check config: \`~/.openclaw/openclaw.json\` (or legacy \`~/.clawdbot/clawdbot.json\`)
+- Reinstall service: \`$OPENCLAW_CMD gateway install\`
 - If env var missing: check if value exists in config env.vars and inline it
 
-Consult https://docs.clawd.bot/ for additional troubleshooting guidance if needed.
+Note: The CLI was rebranded from 'clawdbot' to 'openclaw' in January 2026.
+- Config moved: ~/.clawdbot/ → ~/.openclaw/ (symlinked for compatibility)
+- Both CLI names work, but 'openclaw' is preferred
+
+Consult https://docs.openclaw.ai/ for additional troubleshooting guidance if needed.
 PROMPT_EOF
 
     # Invoke Claude Code using stdin for the prompt
@@ -334,7 +348,7 @@ main() {
     log "Gateway not responding, running diagnostics..."
 
     local doctor_output
-    doctor_output=$(clawdbot doctor 2>&1) || true
+    doctor_output=$($OPENCLAW_CMD doctor 2>&1) || true
     local doctor_exit=$?
 
     # Wait and recheck to avoid false positives

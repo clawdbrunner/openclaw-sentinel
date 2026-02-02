@@ -1,13 +1,13 @@
-# Clawdbot Sentinel
+# OpenClaw Sentinel
 
-Automated health monitoring and self-healing for [Clawdbot](https://docs.clawd.bot/) using [Claude Code](https://claude.ai/claude-code).
+Automated health monitoring and self-healing for [OpenClaw](https://docs.openclaw.ai/) using [Claude Code](https://claude.ai/claude-code).
 
-Sentinel watches your Clawdbot gateway and automatically triggers Claude Code to diagnose and repair issues when they occur.
+Sentinel watches your OpenClaw gateway and automatically triggers Claude Code to diagnose and repair issues when they occur.
 
 ## How It Works
 
 1. **Monitor**: Sentinel checks gateway health every 5 minutes (configurable)
-2. **Detect**: If the gateway doesn't respond, runs `clawdbot doctor` for diagnostics
+2. **Detect**: If the gateway doesn't respond, runs `openclaw doctor` for diagnostics
 3. **Repair**: Triggers Claude Code in headless mode with full context about the failure
 4. **Verify**: Confirms the gateway is back online after repair
 5. **Log**: Records all activity for debugging and audit
@@ -15,26 +15,26 @@ Sentinel watches your Clawdbot gateway and automatically triggers Claude Code to
 ## Requirements
 
 - macOS (uses launchd for scheduling)
-- [Clawdbot](https://docs.clawd.bot/) installed and configured
+- [OpenClaw](https://docs.openclaw.ai/) installed and configured
 - [Claude Code](https://claude.ai/claude-code) installed and authenticated
 - Active Claude subscription (Pro, Max, Teams, or Enterprise)
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/anthropics/clawdbot-sentinel.git
-cd clawdbot-sentinel
+git clone https://github.com/clawdbrunner/openclaw-sentinel.git
+cd openclaw-sentinel
 ./install.sh
 ```
 
 The installer will:
-- Detect your Clawdbot installation
+- Detect your OpenClaw installation
 - Create configuration files
 - Install and start the launchd service
 
 ## Configuration
 
-After installation, edit `~/.clawdbot/sentinel.conf`:
+After installation, edit `~/.openclaw/sentinel.conf`:
 
 ```bash
 # Health check interval in seconds (default: 300 = 5 minutes)
@@ -81,32 +81,32 @@ These commands are installed as aliases. You can also run the scripts directly:
 
 ```bash
 # Trigger health check manually
-~/.clawdbot/sentinel/health-check.sh
+~/.openclaw/sentinel/health-check.sh
 
 # View health log
-tail -f ~/.clawdbot/sentinel/logs/health.log
+tail -f ~/.openclaw/sentinel/logs/health.log
 
 # View repair log
-tail -f ~/.clawdbot/sentinel/logs/repairs.log
+tail -f ~/.openclaw/sentinel/logs/repairs.log
 ```
 
 ### Service Management
 
 ```bash
 # Stop monitoring
-launchctl unload ~/Library/LaunchAgents/com.clawdbot.sentinel.plist
+launchctl unload ~/Library/LaunchAgents/ai.openclaw.sentinel.plist
 
 # Start monitoring
-launchctl load ~/Library/LaunchAgents/com.clawdbot.sentinel.plist
+launchctl load ~/Library/LaunchAgents/ai.openclaw.sentinel.plist
 
 # Restart monitoring
-launchctl unload ~/Library/LaunchAgents/com.clawdbot.sentinel.plist
-launchctl load ~/Library/LaunchAgents/com.clawdbot.sentinel.plist
+launchctl unload ~/Library/LaunchAgents/ai.openclaw.sentinel.plist
+launchctl load ~/Library/LaunchAgents/ai.openclaw.sentinel.plist
 ```
 
 ## Logs
 
-All logs are stored in `~/.clawdbot/sentinel/logs/`:
+All logs are stored in `~/.openclaw/sentinel/logs/`:
 
 | File | Contents |
 |------|----------|
@@ -120,14 +120,14 @@ All logs are stored in `~/.clawdbot/sentinel/logs/`:
 When Sentinel detects an unhealthy gateway:
 
 1. Gathers diagnostic information:
-   - Output from `clawdbot doctor`
-   - Running processes related to clawdbot/node
+   - Output from `openclaw doctor`
+   - Running processes related to openclaw/node
    - Port 18789 status
 
 2. Invokes Claude Code with:
    - Full diagnostic context
    - Access to `CLAUDE.md` with troubleshooting guides
-   - Reference to official docs at https://docs.clawd.bot/
+   - Reference to official docs at https://docs.openclaw.ai/
    - Scoped tool permissions (Bash, Read, Edit, Glob, Grep, WebFetch)
    - Budget and turn limits for cost control
 
@@ -146,21 +146,21 @@ Sentinel includes multiple safeguards:
 - **Lock file**: Prevents concurrent repair attempts
 - **Stale lock detection**: Auto-clears locks older than 30 minutes
 
-Typical repair costs: $0.15 - $0.30 USD
+Typical repair costs: $0.15 - $0.70 USD
 
 ## Uninstall
 
 ```bash
-cd clawdbot-sentinel
+cd openclaw-sentinel
 ./uninstall.sh
 ```
 
 Or manually:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.clawdbot.sentinel.plist
-rm ~/Library/LaunchAgents/com.clawdbot.sentinel.plist
-rm -rf ~/.clawdbot/sentinel
+launchctl unload ~/Library/LaunchAgents/ai.openclaw.sentinel.plist
+rm ~/Library/LaunchAgents/ai.openclaw.sentinel.plist
+rm -rf ~/.openclaw/sentinel
 ```
 
 ## Troubleshooting
@@ -172,7 +172,7 @@ rm -rf ~/.clawdbot/sentinel
 launchctl list | grep sentinel
 
 # Check for errors
-cat ~/.clawdbot/sentinel/logs/launchd-stderr.log
+cat ~/.openclaw/sentinel/logs/launchd-stderr.log
 ```
 
 ### Claude Code not authenticating
@@ -188,12 +188,29 @@ claude --version  # Should work without auth prompts
 Check the repair log for Claude Code output:
 
 ```bash
-cat ~/.clawdbot/sentinel/logs/repairs.log
+cat ~/.openclaw/sentinel/logs/repairs.log
 ```
 
 ### High costs
 
 Reduce `MAX_BUDGET_USD` and `MAX_TURNS` in `sentinel.conf`, or increase `CHECK_INTERVAL` to reduce frequency.
+
+## Migration from Clawdbot
+
+If you have the old `clawdbot-sentinel` installed:
+
+```bash
+# Unload old service
+launchctl unload ~/Library/LaunchAgents/com.clawdbot.sentinel.plist 2>/dev/null
+
+# Remove old plist
+rm -f ~/Library/LaunchAgents/com.clawdbot.sentinel.plist
+
+# Re-run installer for new naming
+./install.sh
+```
+
+The installer will detect existing configs and migrate them.
 
 ## Contributing
 
@@ -205,5 +222,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Related Projects
 
-- [Clawdbot](https://github.com/anthropics/clawdbot) - The gateway being monitored
+- [OpenClaw](https://github.com/anthropics/openclaw) - The gateway being monitored
 - [Claude Code](https://github.com/anthropics/claude-code) - AI coding assistant powering repairs
