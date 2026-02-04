@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+# Ensure PATH includes Homebrew and user bins (critical for launchd)
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$PATH"
+
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -35,6 +39,7 @@ mkdir -p "$LOG_DIR"
 LOCKFILE="$LOG_DIR/repair.lock"
 HEALTH_LOG="$LOG_DIR/health.log"
 REPAIR_LOG="$LOG_DIR/repairs.log"
+REPAIR_HISTORY="$LOG_DIR/repair-history.json"
 
 # Detect which CLI to use (openclaw preferred, clawdbot as fallback)
 if command -v openclaw &> /dev/null; then
@@ -56,6 +61,165 @@ log() {
 
 log_repair() {
     echo "$(date '+%Y-%m-%d %H:%M:%S'): $1" >> "$REPAIR_LOG"
+}
+
+# =============================================================================
+# REPAIR TRACKING
+# =============================================================================
+
+# Generate a fingerprint for an issue based on doctor output
+# This helps identify recurring issues even if details differ slightly
+generate_issue_fingerprint() {
+    local doctor_output="$1"
+    local doctor_exit="$2"
+    
+    # Extract key error patterns to create a fingerprint
+    local fingerprint=""
+    
+    # Check for specific error patterns in order of specificity
+    if echo "$doctor_output" | grep -q "MissingEnvVarError"; then
+        local var_name
+        var_name=$(echo "$doctor_output" | grep -o 'Missing env var "[^"]*"' | head -1 | sed 's/Missing env var "\([^"]*\)"/\1/')
+        fingerprint="missing_env_var:${var_name:-unknown}"
+    elif echo "$doctor_output" | grep -q "ECONNREFUSED\|Connection refused"; then
+        fingerprint="connection_refused"
+    elif echo "$doctor_output" | grep -q "gateway.*not running\|gateway.*stopped"; then
+        fingerprint="gateway_not_running"
+    elif echo "$doctor_output" | grep -q "invalid_auth\|invalid_auth_error"; then
+        fingerprint="invalid_auth"
+    elif echo "$doctor_output" | grep -q "config invalid\|configuration error"; then
+        fingerprint="config_invalid"
+    elif echo "$doctor_output" | grep -q "port.*in use\|EADDRINUSE"; then
+        fingerprint="port_conflict"
+    elif [ "$doctor_exit" -ne 0 ]; then
+        fingerprint="doctor_exit_${doctor_exit}"
+    else
+        fingerprint="gateway_unhealthy"
+    fi
+    
+    echo "$fingerprint"
+}
+
+# Record repair attempt start
+record_repair_start() {
+    local issue_fingerprint="$1"
+    local doctor_exit="$2"
+    local is_auto_fix="$3"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%dT%H:%M:%S')
+    local epoch
+    epoch=$(date +%s)
+    
+    # Create repair record
+    local record
+    record=$(cat << EOF
+{
+  "id": "${epoch}-${issue_fingerprint}",
+  "timestamp": "$timestamp",
+  "epoch": $epoch,
+  "issue_fingerprint": "$issue_fingerprint",
+  "doctor_exit_code": $doctor_exit,
+  "repair_type": "$is_auto_fix",
+  "status": "started"
+}
+EOF
+)
+    
+    # Append to history file (create if doesn't exist)
+    if [ ! -f "$REPAIR_HISTORY" ]; then
+        echo "[$record]" > "$REPAIR_HISTORY"
+    else
+        # Use jq to append if available, otherwise simple append
+        if command -v jq &> /dev/null; then
+            jq ". + [$record]" "$REPAIR_HISTORY" > "$REPAIR_HISTORY.tmp" && mv "$REPAIR_HISTORY.tmp" "$REPAIR_HISTORY"
+        else
+            # Fallback: append with manual JSON manipulation
+            local temp_file
+            temp_file=$(mktemp)
+            # Remove trailing ] and add comma + new record + ]
+            sed '$ s/\]$/,/' "$REPAIR_HISTORY" > "$temp_file"
+            echo "$record]" >> "$temp_file"
+            mv "$temp_file" "$REPAIR_HISTORY"
+        fi
+    fi
+    
+    log "Repair tracking: recorded start for issue '$issue_fingerprint'"
+    echo "$epoch-$issue_fingerprint"
+}
+
+# Record repair completion
+record_repair_complete() {
+    local repair_id="$1"
+    local success="$2"
+    local cost_usd="$3"
+    local resolution="$4"
+    local num_turns="$5"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%dT%H:%M:%S')
+    local epoch
+    epoch=$(date +%s)
+    
+    # Calculate duration if we can find the start time
+    local start_epoch
+    start_epoch=$(echo "$repair_id" | cut -d'-' -f1)
+    local duration=$((epoch - start_epoch))
+    
+    if [ -f "$REPAIR_HISTORY" ] && command -v jq &> /dev/null; then
+        # Update the existing record
+        jq --arg id "$repair_id" \
+           --arg status "$success" \
+           --arg cost "$cost_usd" \
+           --arg resolution "$resolution" \
+           --argjson turns "${num_turns:-null}" \
+           --argjson duration "$duration" \
+           --arg completed "$timestamp" \
+           'map(if .id == $id then . + {
+             status: $status,
+             completed_at: $completed,
+             duration_seconds: $duration,
+             cost_usd: ($cost | tonumber? // 0),
+             num_turns: $turns,
+             resolution: $resolution
+           } else . end)' \
+           "$REPAIR_HISTORY" > "$REPAIR_HISTORY.tmp" && mv "$REPAIR_HISTORY.tmp" "$REPAIR_HISTORY"
+    fi
+    
+    log "Repair tracking: recorded completion (success=$success, cost=$cost_usd, duration=${duration}s)"
+}
+
+# Get recent repair count for an issue fingerprint (last N minutes)
+get_recent_repair_count() {
+    local fingerprint="$1"
+    local minutes="${2:-30}"
+    local cutoff
+    cutoff=$(($(date +%s) - minutes * 60))
+    
+    if [ -f "$REPAIR_HISTORY" ] && command -v jq &> /dev/null; then
+        jq --arg fp "$fingerprint" --argjson cutoff "$cutoff" \
+           '[.[] | select(.issue_fingerprint == $fp and .epoch >= $cutoff)] | length' \
+           "$REPAIR_HISTORY" 2>/dev/null || echo "0"
+    else
+        echo "0"
+    fi
+}
+
+# Get repair statistics summary
+get_repair_stats() {
+    if [ -f "$REPAIR_HISTORY" ] && command -v jq &> /dev/null; then
+        local total
+        local successful
+        local failed
+        local total_cost
+        
+        total=$(jq 'length' "$REPAIR_HISTORY" 2>/dev/null || echo "0")
+        successful=$(jq '[.[] | select(.status == "success")] | length' "$REPAIR_HISTORY" 2>/dev/null || echo "0")
+        failed=$(jq '[.[] | select(.status == "failed")] | length' "$REPAIR_HISTORY" 2>/dev/null || echo "0")
+        total_cost=$(jq '[.[] | .cost_usd // 0] | add' "$REPAIR_HISTORY" 2>/dev/null || echo "0")
+        
+        echo "Total repairs: $total | Successful: $successful | Failed: $failed | Total cost: \$$(printf "%.2f" "$total_cost")"
+    else
+        echo "No repair history available"
+    fi
 }
 
 # =============================================================================
@@ -196,18 +360,38 @@ trigger_repair() {
     local doctor_output="$1"
     local doctor_exit="$2"
 
+    # Generate issue fingerprint for tracking
+    local issue_fingerprint
+    issue_fingerprint=$(generate_issue_fingerprint "$doctor_output" "$doctor_exit")
+    log "Issue fingerprint: $issue_fingerprint"
+
     # First, try auto-fix for common issues
     if try_auto_fix "$doctor_output"; then
         log "Auto-fix succeeded, verifying gateway..."
+        # Track auto-fix success
+        record_repair_start "$issue_fingerprint" "$doctor_exit" "auto_fix"
         if check_gateway; then
             log "Gateway is responsive after auto-fix"
+            # Record completion for auto-fix
+            if [ -f "$REPAIR_HISTORY" ] && command -v jq &> /dev/null; then
+                local last_id
+                last_id=$(jq -r '.[-1].id' "$REPAIR_HISTORY" 2>/dev/null || echo "")
+                if [ -n "$last_id" ]; then
+                    record_repair_complete "$last_id" "success" "0" "auto_fix_applied" "null"
+                fi
+            fi
             return 0
         fi
         log "Auto-fix applied but gateway still not responsive, invoking Claude Code"
     fi
 
-    log "Triggering Claude Code repair..."
-    log_repair "=== Repair attempt started ==="
+    # Track this repair attempt
+    local repair_id
+    repair_id=$(record_repair_start "$issue_fingerprint" "$doctor_exit" "claude_code")
+    
+    log "Triggering Claude Code repair (ID: $repair_id)..."
+    log_repair "=== Repair attempt started ($repair_id) ==="
+    log_repair "Issue fingerprint: $issue_fingerprint"
 
     # Gather additional diagnostic information
     local process_state
@@ -303,11 +487,36 @@ PROMPT_EOF
 
     local repair_exit=$?
 
+    # Extract key data from repair output for tracking
+    local repair_success="failed"
+    local repair_cost="0"
+    local repair_turns="null"
+    local resolution_summary="unknown"
+    
+    if echo "$repair_output" | grep -q '"is_error":false'; then
+        repair_success="success"
+    fi
+    
+    # Extract cost from JSON output
+    if command -v jq &> /dev/null; then
+        repair_cost=$(echo "$repair_output" | jq -r '.total_cost_usd // 0' 2>/dev/null || echo "0")
+        repair_turns=$(echo "$repair_output" | jq -r '.num_turns // "null"' 2>/dev/null || echo "null")
+        
+        # Try to extract a brief resolution from the result field
+        resolution_summary=$(echo "$repair_output" | jq -r '.result | split("\n")[0] // "see repair log"' 2>/dev/null | cut -c1-100 || echo "see repair log")
+    fi
+    
+    # Record repair completion
+    record_repair_complete "$repair_id" "$repair_success" "$repair_cost" "$resolution_summary" "$repair_turns"
+
     # Clean up temp file
     rm -f "$prompt_file"
 
     # Log the repair attempt
+    log_repair "Repair ID: $repair_id"
     log_repair "Exit code: $repair_exit"
+    log_repair "Success: $repair_success | Cost: \$$repair_cost | Turns: $repair_turns"
+    log_repair "Resolution: $resolution_summary"
     log_repair "$repair_output"
     log_repair "=== Repair attempt ended ==="
     log_repair ""
@@ -379,6 +588,9 @@ main() {
     else
         log "Repair attempt completed but gateway still not responding"
     fi
+    
+    # Log repair statistics summary
+    log "$(get_repair_stats)"
 }
 
 # Run main function
