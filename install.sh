@@ -208,6 +208,13 @@ MAX_LOCK_AGE=1800
 # Keep logs for this many days (0 = keep forever)
 LOG_RETENTION_DAYS=30
 
+# Notification settings (leave NOTIFY_CMD empty to disable)
+NOTIFY_CMD=""
+NOTIFY_MODE="arg"
+NOTIFY_ON_START=1
+NOTIFY_ON_SUCCESS=1
+NOTIFY_ON_FAILURE=1
+
 # --- Backup ---
 BACKUP_ENABLED=true
 BACKUP_DIR="$BACKUP_DIR"
