@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-# Ensure PATH includes Homebrew and user bins (critical for launchd)
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$PATH"
+# Ensure PATH includes Homebrew and user bins (critical for launchd/cron)
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.npm/bin:$PATH"
 
 
 # =============================================================================
