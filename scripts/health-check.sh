@@ -26,6 +26,11 @@ ALLOWED_TOOLS="Bash,Read,Edit,Glob,Grep,WebFetch"
 MAX_LOCK_AGE=1800
 LOG_DIR="$SENTINEL_DIR/logs"
 LOG_RETENTION_DAYS=30
+NOTIFY_CMD=""
+NOTIFY_MODE="arg"
+NOTIFY_ON_START=1
+NOTIFY_ON_SUCCESS=1
+NOTIFY_ON_FAILURE=1
 
 # Load user configuration if exists
 if [ -f "$CONFIG_FILE" ]; then
@@ -40,6 +45,16 @@ LOCKFILE="$LOG_DIR/repair.lock"
 HEALTH_LOG="$LOG_DIR/health.log"
 REPAIR_LOG="$LOG_DIR/repairs.log"
 REPAIR_HISTORY="$LOG_DIR/repair-history.json"
+
+# Notification state
+LAST_ISSUE_FP=""
+LAST_REPAIR_ID=""
+LAST_REPAIR_TYPE=""
+LAST_REPAIR_EXIT=""
+LAST_REPAIR_SUCCESS=""
+LAST_REPAIR_COST=""
+LAST_REPAIR_TURNS=""
+LAST_REPAIR_RESOLUTION=""
 
 # Detect which CLI to use (openclaw preferred, clawdbot as fallback)
 if command -v openclaw &> /dev/null; then
@@ -61,6 +76,74 @@ log() {
 
 log_repair() {
     echo "$(date '+%Y-%m-%d %H:%M:%S'): $1" >> "$REPAIR_LOG"
+}
+
+# =============================================================================
+# NOTIFICATIONS
+# =============================================================================
+
+notify_send() {
+    local message="$1"
+    local mode="${NOTIFY_MODE:-arg}"
+    mode=$(echo "$mode" | tr '[:upper:]' '[:lower:]')
+
+    if [ -z "${NOTIFY_CMD:-}" ]; then
+        return 0
+    fi
+
+    local rc=0
+    set +e
+    if [ "$mode" = "stdin" ]; then
+        printf '%s' "$message" | bash -c "$NOTIFY_CMD"
+        rc=$?
+    else
+        # Default: append message as final argument
+        bash -c "$NOTIFY_CMD \"\$1\"" -- "$message"
+        rc=$?
+    fi
+    set -e
+
+    if [ $rc -ne 0 ]; then
+        log "Notify failed (rc=$rc, mode=$mode)"
+    fi
+
+    return 0
+}
+
+is_enabled() {
+    case "${1:-1}" in
+        1|true|TRUE|yes|YES|on|ON)
+            return 0
+            ;;
+        0|false|FALSE|no|NO|off|OFF|"")
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+notify_event() {
+    local kind="$1"
+    local message="$2"
+
+    case "$kind" in
+        start)
+            is_enabled "${NOTIFY_ON_START:-1}" || return 0
+            ;;
+        success)
+            is_enabled "${NOTIFY_ON_SUCCESS:-1}" || return 0
+            ;;
+        failure)
+            is_enabled "${NOTIFY_ON_FAILURE:-1}" || return 0
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    notify_send "$message"
 }
 
 # =============================================================================
@@ -363,23 +446,27 @@ trigger_repair() {
     # Generate issue fingerprint for tracking
     local issue_fingerprint
     issue_fingerprint=$(generate_issue_fingerprint "$doctor_output" "$doctor_exit")
+    LAST_ISSUE_FP="$issue_fingerprint"
     log "Issue fingerprint: $issue_fingerprint"
+    notify_event "start" "OpenClaw Sentinel: repair started on $(hostname). Issue=${LAST_ISSUE_FP}. Doctor exit=${doctor_exit}. Gateway=${GATEWAY_URL}."
 
     # First, try auto-fix for common issues
     if try_auto_fix "$doctor_output"; then
         log "Auto-fix succeeded, verifying gateway..."
         # Track auto-fix success
-        record_repair_start "$issue_fingerprint" "$doctor_exit" "auto_fix"
+        LAST_REPAIR_TYPE="auto_fix"
+        LAST_REPAIR_EXIT="0"
+        LAST_REPAIR_ID=$(record_repair_start "$issue_fingerprint" "$doctor_exit" "auto_fix")
         if check_gateway; then
             log "Gateway is responsive after auto-fix"
             # Record completion for auto-fix
             if [ -f "$REPAIR_HISTORY" ] && command -v jq &> /dev/null; then
-                local last_id
-                last_id=$(jq -r '.[-1].id' "$REPAIR_HISTORY" 2>/dev/null || echo "")
-                if [ -n "$last_id" ]; then
-                    record_repair_complete "$last_id" "success" "0" "auto_fix_applied" "null"
-                fi
+                record_repair_complete "$LAST_REPAIR_ID" "success" "0" "auto_fix_applied" "null"
             fi
+            LAST_REPAIR_SUCCESS="success"
+            LAST_REPAIR_COST="0"
+            LAST_REPAIR_TURNS="null"
+            LAST_REPAIR_RESOLUTION="auto_fix_applied"
             return 0
         fi
         log "Auto-fix applied but gateway still not responsive, invoking Claude Code"
@@ -388,6 +475,8 @@ trigger_repair() {
     # Track this repair attempt
     local repair_id
     repair_id=$(record_repair_start "$issue_fingerprint" "$doctor_exit" "claude_code")
+    LAST_REPAIR_ID="$repair_id"
+    LAST_REPAIR_TYPE="claude_code"
     
     log "Triggering Claude Code repair (ID: $repair_id)..."
     log_repair "=== Repair attempt started ($repair_id) ==="
@@ -486,6 +575,7 @@ PROMPT_EOF
         2>&1) || true
 
     local repair_exit=$?
+    LAST_REPAIR_EXIT="$repair_exit"
 
     # Extract key data from repair output for tracking
     local repair_success="failed"
@@ -508,6 +598,10 @@ PROMPT_EOF
     
     # Record repair completion
     record_repair_complete "$repair_id" "$repair_success" "$repair_cost" "$resolution_summary" "$repair_turns"
+    LAST_REPAIR_SUCCESS="$repair_success"
+    LAST_REPAIR_COST="$repair_cost"
+    LAST_REPAIR_TURNS="$repair_turns"
+    LAST_REPAIR_RESOLUTION="$resolution_summary"
 
     # Clean up temp file
     rm -f "$prompt_file"
@@ -585,8 +679,10 @@ main() {
 
     if check_gateway; then
         log "Repair successful - gateway is now responding"
+        notify_event "success" "OpenClaw Sentinel: repair succeeded on $(hostname). Type=${LAST_REPAIR_TYPE:-unknown}. Issue=${LAST_ISSUE_FP:-unknown}. Cost=\$${LAST_REPAIR_COST:-0} Turns=${LAST_REPAIR_TURNS:-null}."
     else
         log "Repair attempt completed but gateway still not responding"
+        notify_event "failure" "OpenClaw Sentinel: repair failed on $(hostname). Type=${LAST_REPAIR_TYPE:-unknown}. Issue=${LAST_ISSUE_FP:-unknown}. Exit=${LAST_REPAIR_EXIT:-unknown}. Gateway still unhealthy."
     fi
     
     # Log repair statistics summary
