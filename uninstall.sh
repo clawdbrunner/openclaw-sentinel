@@ -17,6 +17,7 @@ BACKUP_DIR="$SENTINEL_DIR/backups"
 CONFIG_FILE="$HOME/.openclaw/sentinel.conf"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.plist"
 LAUNCHD_BACKUP_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.backup.plist"
+LAUNCHD_UPGRADE_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.upgrade.plist"
 CLAUDE_MD="$HOME/.openclaw/CLAUDE.md"
 
 # Legacy paths
@@ -49,6 +50,7 @@ fi
 echo "This will remove:"
 [ -f "$LAUNCHD_PLIST" ] && echo "  - LaunchAgent: $LAUNCHD_PLIST"
 [ -f "$LAUNCHD_BACKUP_PLIST" ] && echo "  - LaunchAgent: $LAUNCHD_BACKUP_PLIST"
+[ -f "$LAUNCHD_UPGRADE_PLIST" ] && echo "  - LaunchAgent: $LAUNCHD_UPGRADE_PLIST"
 [ -f "$LEGACY_LAUNCHD_PLIST" ] && echo "  - Legacy LaunchAgent: $LEGACY_LAUNCHD_PLIST"
 [ -d "$SENTINEL_DIR" ] && echo "  - Sentinel directory: $SENTINEL_DIR"
 [ -d "$LEGACY_SENTINEL_DIR" ] && echo "  - Legacy directory: $LEGACY_SENTINEL_DIR"
@@ -96,6 +98,12 @@ if [ -f "$LAUNCHD_BACKUP_PLIST" ]; then
     launchctl unload "$LAUNCHD_BACKUP_PLIST" 2>/dev/null || true
     rm -f "$LAUNCHD_BACKUP_PLIST"
     echo -e "${GREEN}✓${NC} Removed backup LaunchAgent"
+fi
+
+if [ -f "$LAUNCHD_UPGRADE_PLIST" ]; then
+    launchctl unload "$LAUNCHD_UPGRADE_PLIST" 2>/dev/null || true
+    rm -f "$LAUNCHD_UPGRADE_PLIST"
+    echo -e "${GREEN}✓${NC} Removed upgrade LaunchAgent"
 fi
 
 if [ -f "$LEGACY_LAUNCHD_PLIST" ]; then

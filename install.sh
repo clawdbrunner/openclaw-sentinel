@@ -13,12 +13,14 @@ NC='\033[0m' # No Color
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SENTINEL_VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
 SENTINEL_DIR="$HOME/.openclaw/sentinel"
 CONFIG_FILE="$HOME/.openclaw/sentinel.conf"
 LOG_DIR="$SENTINEL_DIR/logs"
 BACKUP_DIR="$SENTINEL_DIR/backups"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.plist"
 LAUNCHD_BACKUP_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.backup.plist"
+LAUNCHD_UPGRADE_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.upgrade.plist"
 
 # Legacy paths (for migration)
 LEGACY_SENTINEL_DIR="$HOME/.clawdbot/sentinel"
@@ -94,6 +96,7 @@ if [ "$NEED_REINSTALL" = true ]; then
     # Unload existing services
     launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
     launchctl unload "$LAUNCHD_BACKUP_PLIST" 2>/dev/null || true
+    launchctl unload "$LAUNCHD_UPGRADE_PLIST" 2>/dev/null || true
     launchctl unload "$LEGACY_LAUNCHD_PLIST" 2>/dev/null || true
     rm -f "$LEGACY_LAUNCHD_PLIST"
 fi
@@ -163,9 +166,18 @@ cp "$SCRIPT_DIR/scripts/backup.sh" "$SENTINEL_DIR/backup.sh"
 chmod +x "$SENTINEL_DIR/backup.sh"
 echo -e "${GREEN}✓${NC} Installed backup script"
 
+# Copy upgrade script
+cp "$SCRIPT_DIR/scripts/upgrade.sh" "$SENTINEL_DIR/upgrade.sh"
+chmod +x "$SENTINEL_DIR/upgrade.sh"
+echo -e "${GREEN}✓${NC} Installed upgrade script"
+
 # Copy CLAUDE.md context file
 cp "$SCRIPT_DIR/config/CLAUDE.md" "$HOME/.openclaw/CLAUDE.md"
 echo -e "${GREEN}✓${NC} Installed CLAUDE.md context file"
+
+# Record installed sentinel version
+echo "$SENTINEL_VERSION" > "$SENTINEL_DIR/VERSION"
+echo -e "${GREEN}✓${NC} Recorded sentinel version ($SENTINEL_VERSION)"
 
 # Create configuration file
 cat > "$CONFIG_FILE" << EOF
@@ -204,6 +216,14 @@ BACKUP_TIER_WORKSPACE=true
 BACKUP_TIER_EXTENDED=false
 MAX_BACKUPS=14
 BACKUP_BEFORE_UPGRADE=true
+
+# --- Upgrade ---
+# Enable scheduled upgrade checks (disabled by default)
+UPGRADE_ENABLED=false
+# Schedule: runs weekly on Sunday at 04:00
+UPGRADE_SCHEDULE="weekly"
+# Automatically apply updates (if false, only notifies)
+UPGRADE_AUTO_APPLY=false
 EOF
 echo -e "${GREEN}✓${NC} Created configuration file"
 
@@ -224,6 +244,14 @@ sed -e "s|{{SENTINEL_DIR}}|$SENTINEL_DIR|g" \
     -e "s|{{CONFIG_FILE}}|$CONFIG_FILE|g" \
     "$SCRIPT_DIR/launchd/ai.openclaw.sentinel.backup.plist.template" > "$LAUNCHD_BACKUP_PLIST"
 echo -e "${GREEN}✓${NC} Created launchd backup service"
+
+# Generate upgrade launchd plist from template (disabled by default)
+sed -e "s|{{SENTINEL_DIR}}|$SENTINEL_DIR|g" \
+    -e "s|{{LOG_DIR}}|$LOG_DIR|g" \
+    -e "s|{{HOME}}|$HOME|g" \
+    -e "s|{{CONFIG_FILE}}|$CONFIG_FILE|g" \
+    "$SCRIPT_DIR/launchd/ai.openclaw.sentinel.upgrade.plist.template" > "$LAUNCHD_UPGRADE_PLIST"
+echo -e "${GREEN}✓${NC} Created launchd upgrade service (disabled by default)"
 
 # Load the services
 launchctl load "$LAUNCHD_PLIST"
@@ -262,7 +290,17 @@ if [[ ! $REPLY =~ ^[Nn]$ ]]; then
 
 # OpenClaw Sentinel aliases
 sentinel() {
-    case "$1" in
+    case "${1:---help}" in
+        version|--version|-v)
+            local sv="unknown"
+            [ -f ~/.openclaw/sentinel/VERSION ] && sv=$(cat ~/.openclaw/sentinel/VERSION)
+            echo "OpenClaw Sentinel v${sv}"
+            if command -v openclaw &>/dev/null; then
+                echo "OpenClaw $(openclaw --version 2>/dev/null | head -1 || echo 'unknown')"
+            elif command -v clawdbot &>/dev/null; then
+                echo "Clawdbot $(clawdbot --version 2>/dev/null | head -1 || echo 'unknown')"
+            fi
+            ;;
         status)
             launchctl list | grep sentinel && echo "" && tail -5 ~/.openclaw/sentinel/logs/health.log
             ;;
@@ -279,8 +317,35 @@ sentinel() {
             shift
             ~/.openclaw/sentinel/backup.sh "$@"
             ;;
+        upgrade)
+            shift
+            case "${1:-}" in
+                check)
+                    ~/.openclaw/sentinel/upgrade.sh check
+                    ;;
+                rollback)
+                    ~/.openclaw/sentinel/upgrade.sh rollback
+                    ;;
+                --force|-f)
+                    ~/.openclaw/sentinel/upgrade.sh upgrade --force
+                    ;;
+                ""|--help|-h)
+                    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+                        ~/.openclaw/sentinel/upgrade.sh --help
+                    else
+                        ~/.openclaw/sentinel/upgrade.sh upgrade
+                    fi
+                    ;;
+                *)
+                    echo "Unknown upgrade option: $1"
+                    ~/.openclaw/sentinel/upgrade.sh --help
+                    ;;
+            esac
+            ;;
         *)
-            echo "Usage: sentinel {status|check|logs|repairs|backup}"
+            echo "Usage: sentinel {version|status|check|logs|repairs|backup|upgrade}"
+            echo ""
+            echo "  sentinel version             Show sentinel and OpenClaw versions"
             echo ""
             echo "Backup commands:"
             echo "  sentinel backup              Create a backup"
@@ -288,6 +353,12 @@ sentinel() {
             echo "  sentinel backup list         List available backups"
             echo "  sentinel backup restore ...  Restore from a backup"
             echo "  sentinel backup prune        Remove old backups"
+            echo ""
+            echo "Upgrade commands:"
+            echo "  sentinel upgrade check       Check for available updates"
+            echo "  sentinel upgrade             Upgrade with backup and verification"
+            echo "  sentinel upgrade --force     Force upgrade even if current"
+            echo "  sentinel upgrade rollback    Restore pre-upgrade backup"
             ;;
     esac
 }
@@ -321,6 +392,7 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║              Sentinel installed successfully!                 ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
+echo "Version:        $SENTINEL_VERSION"
 echo "Configuration:  $CONFIG_FILE"
 echo "Logs:           $LOG_DIR/"
 echo "Backups:        $BACKUP_DIR/"
@@ -328,6 +400,7 @@ echo "Check interval: Every $CHECK_INTERVAL seconds"
 echo "Backup time:    Daily at ${BACKUP_HOUR}:00"
 echo ""
 echo "Commands:"
+echo "  sentinel version  - Show installed version"
 echo "  sentinel status   - Check service status"
 echo "  sentinel check    - Manually trigger health check"
 echo "  sentinel logs     - View health logs"
@@ -339,6 +412,12 @@ echo "  sentinel backup --full      - Create a full backup (all tiers)"
 echo "  sentinel backup list        - List available backups"
 echo "  sentinel backup restore ... - Restore from a backup"
 echo "  sentinel backup prune       - Remove old backups"
+echo ""
+echo "Upgrade commands:"
+echo "  sentinel upgrade check      - Check for available updates"
+echo "  sentinel upgrade            - Upgrade with backup and verification"
+echo "  sentinel upgrade --force    - Force upgrade even if current"
+echo "  sentinel upgrade rollback   - Restore pre-upgrade backup"
 echo ""
 echo "To modify settings, edit: $CONFIG_FILE"
 echo "Then restart services:"
