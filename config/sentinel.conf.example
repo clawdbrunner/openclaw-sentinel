@@ -65,3 +65,28 @@ LOG_RETENTION_DAYS=30
 
 # Custom path to claude binary (auto-detected if not set)
 # CLAUDE_BIN="/usr/local/bin/claude"
+
+# =============================================================================
+# BACKUP SETTINGS
+# =============================================================================
+
+# Enable scheduled backups (default: true)
+BACKUP_ENABLED=true
+
+# Backup storage directory
+BACKUP_DIR="$HOME/.openclaw/sentinel/backups"
+
+# Hour to run daily scheduled backup (24h format, default: 3 = 03:00)
+BACKUP_SCHEDULE_HOUR=3
+
+# Include workspace/ in scheduled backups (AGENTS.md, SOUL.md, memory/, etc.)
+BACKUP_TIER_WORKSPACE=true
+
+# Include extended files in scheduled backups (agents/, skills, custom scripts)
+BACKUP_TIER_EXTENDED=false
+
+# Maximum number of backups to retain (oldest pruned first)
+MAX_BACKUPS=14
+
+# Always create a backup before upgrades (used by upgrade.sh)
+BACKUP_BEFORE_UPGRADE=true

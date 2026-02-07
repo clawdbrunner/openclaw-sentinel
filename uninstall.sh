@@ -13,8 +13,10 @@ NC='\033[0m' # No Color
 
 # Configuration (both new and legacy paths)
 SENTINEL_DIR="$HOME/.openclaw/sentinel"
+BACKUP_DIR="$SENTINEL_DIR/backups"
 CONFIG_FILE="$HOME/.openclaw/sentinel.conf"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.plist"
+LAUNCHD_BACKUP_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.backup.plist"
 CLAUDE_MD="$HOME/.openclaw/CLAUDE.md"
 
 # Legacy paths
@@ -46,6 +48,7 @@ fi
 # Confirm
 echo "This will remove:"
 [ -f "$LAUNCHD_PLIST" ] && echo "  - LaunchAgent: $LAUNCHD_PLIST"
+[ -f "$LAUNCHD_BACKUP_PLIST" ] && echo "  - LaunchAgent: $LAUNCHD_BACKUP_PLIST"
 [ -f "$LEGACY_LAUNCHD_PLIST" ] && echo "  - Legacy LaunchAgent: $LEGACY_LAUNCHD_PLIST"
 [ -d "$SENTINEL_DIR" ] && echo "  - Sentinel directory: $SENTINEL_DIR"
 [ -d "$LEGACY_SENTINEL_DIR" ] && echo "  - Legacy directory: $LEGACY_SENTINEL_DIR"
@@ -54,6 +57,22 @@ echo "This will remove:"
 [ -f "$CLAUDE_MD" ] && echo "  - CLAUDE.md: $CLAUDE_MD"
 [ -f "$LEGACY_CLAUDE_MD" ] && echo "  - Legacy CLAUDE.md: $LEGACY_CLAUDE_MD"
 echo ""
+
+# Check for backups
+PRESERVE_BACKUPS=false
+if [ -d "$BACKUP_DIR" ] && [ -n "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
+    BACKUP_COUNT=$(ls -1 "$BACKUP_DIR"/*.tar.gz 2>/dev/null | wc -l | tr -d ' ')
+    echo -e "${YELLOW}Found $BACKUP_COUNT backup(s) in $BACKUP_DIR${NC}"
+    read -p "Preserve backups? (Y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        PRESERVE_BACKUPS=true
+        echo "Backups will be preserved."
+    else
+        echo "Backups will be deleted."
+    fi
+    echo ""
+fi
 
 read -p "Are you sure you want to uninstall? (y/N) " -n 1 -r
 echo
@@ -70,7 +89,13 @@ echo -e "${BLUE}Uninstalling Sentinel...${NC}"
 if [ -f "$LAUNCHD_PLIST" ]; then
     launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
     rm -f "$LAUNCHD_PLIST"
-    echo -e "${GREEN}✓${NC} Removed LaunchAgent"
+    echo -e "${GREEN}✓${NC} Removed health LaunchAgent"
+fi
+
+if [ -f "$LAUNCHD_BACKUP_PLIST" ]; then
+    launchctl unload "$LAUNCHD_BACKUP_PLIST" 2>/dev/null || true
+    rm -f "$LAUNCHD_BACKUP_PLIST"
+    echo -e "${GREEN}✓${NC} Removed backup LaunchAgent"
 fi
 
 if [ -f "$LEGACY_LAUNCHD_PLIST" ]; then
@@ -81,8 +106,20 @@ fi
 
 # Remove directories
 if [ -d "$SENTINEL_DIR" ]; then
-    rm -rf "$SENTINEL_DIR"
-    echo -e "${GREEN}✓${NC} Removed sentinel directory"
+    if [ "$PRESERVE_BACKUPS" = true ] && [ -d "$BACKUP_DIR" ]; then
+        # Move backups to temp location
+        TEMP_BACKUP_DIR=$(mktemp -d)
+        mv "$BACKUP_DIR" "$TEMP_BACKUP_DIR/"
+        rm -rf "$SENTINEL_DIR"
+        # Restore backups
+        mkdir -p "$SENTINEL_DIR"
+        mv "$TEMP_BACKUP_DIR/backups" "$BACKUP_DIR"
+        rm -rf "$TEMP_BACKUP_DIR"
+        echo -e "${GREEN}✓${NC} Removed sentinel directory (backups preserved)"
+    else
+        rm -rf "$SENTINEL_DIR"
+        echo -e "${GREEN}✓${NC} Removed sentinel directory"
+    fi
 fi
 
 if [ -d "$LEGACY_SENTINEL_DIR" ]; then
@@ -130,6 +167,11 @@ done
 
 echo ""
 echo -e "${GREEN}Sentinel has been uninstalled.${NC}"
+if [ "$PRESERVE_BACKUPS" = true ]; then
+    echo ""
+    echo -e "${YELLOW}Backups preserved at: $BACKUP_DIR${NC}"
+    echo "To restore after reinstall: sentinel backup restore --latest"
+fi
 echo ""
 echo "To reinstall, run: ./install.sh"
 echo ""

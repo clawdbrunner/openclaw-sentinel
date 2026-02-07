@@ -16,7 +16,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SENTINEL_DIR="$HOME/.openclaw/sentinel"
 CONFIG_FILE="$HOME/.openclaw/sentinel.conf"
 LOG_DIR="$SENTINEL_DIR/logs"
+BACKUP_DIR="$SENTINEL_DIR/backups"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.plist"
+LAUNCHD_BACKUP_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.sentinel.backup.plist"
 
 # Legacy paths (for migration)
 LEGACY_SENTINEL_DIR="$HOME/.clawdbot/sentinel"
@@ -27,6 +29,7 @@ LEGACY_LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.clawdbot.sentinel.plist"
 DEFAULT_CHECK_INTERVAL=300
 DEFAULT_MAX_BUDGET=2.00
 DEFAULT_MAX_TURNS=20
+DEFAULT_BACKUP_HOUR=3
 
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════════════════════════════╗"
@@ -90,6 +93,7 @@ if [ "$NEED_REINSTALL" = true ]; then
     fi
     # Unload existing services
     launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+    launchctl unload "$LAUNCHD_BACKUP_PLIST" 2>/dev/null || true
     launchctl unload "$LEGACY_LAUNCHD_PLIST" 2>/dev/null || true
     rm -f "$LEGACY_LAUNCHD_PLIST"
 fi
@@ -130,6 +134,11 @@ CURRENT_TURNS="${MAX_TURNS:-$DEFAULT_MAX_TURNS}"
 read -p "Maximum Claude Code turns per repair [$CURRENT_TURNS]: " MAX_TURNS
 MAX_TURNS=${MAX_TURNS:-$CURRENT_TURNS}
 
+# Backup schedule hour
+CURRENT_BACKUP_HOUR="${BACKUP_SCHEDULE_HOUR:-$DEFAULT_BACKUP_HOUR}"
+read -p "Daily backup hour (0-23, 24h format) [$CURRENT_BACKUP_HOUR]: " BACKUP_HOUR
+BACKUP_HOUR=${BACKUP_HOUR:-$CURRENT_BACKUP_HOUR}
+
 # =============================================================================
 # INSTALLATION
 # =============================================================================
@@ -140,6 +149,7 @@ echo -e "${BLUE}Installing Sentinel...${NC}"
 # Create directories
 mkdir -p "$SENTINEL_DIR"
 mkdir -p "$LOG_DIR"
+mkdir -p "$BACKUP_DIR"
 mkdir -p "$HOME/Library/LaunchAgents"
 echo -e "${GREEN}✓${NC} Created directories"
 
@@ -147,6 +157,11 @@ echo -e "${GREEN}✓${NC} Created directories"
 cp "$SCRIPT_DIR/scripts/health-check.sh" "$SENTINEL_DIR/health-check.sh"
 chmod +x "$SENTINEL_DIR/health-check.sh"
 echo -e "${GREEN}✓${NC} Installed health check script"
+
+# Copy backup script
+cp "$SCRIPT_DIR/scripts/backup.sh" "$SENTINEL_DIR/backup.sh"
+chmod +x "$SENTINEL_DIR/backup.sh"
+echo -e "${GREEN}✓${NC} Installed backup script"
 
 # Copy CLAUDE.md context file
 cp "$SCRIPT_DIR/config/CLAUDE.md" "$HOME/.openclaw/CLAUDE.md"
@@ -180,6 +195,15 @@ MAX_LOCK_AGE=1800
 
 # Keep logs for this many days (0 = keep forever)
 LOG_RETENTION_DAYS=30
+
+# --- Backup ---
+BACKUP_ENABLED=true
+BACKUP_DIR="$BACKUP_DIR"
+BACKUP_SCHEDULE_HOUR=$BACKUP_HOUR
+BACKUP_TIER_WORKSPACE=true
+BACKUP_TIER_EXTENDED=false
+MAX_BACKUPS=14
+BACKUP_BEFORE_UPGRADE=true
 EOF
 echo -e "${GREEN}✓${NC} Created configuration file"
 
@@ -190,11 +214,23 @@ sed -e "s|{{SENTINEL_DIR}}|$SENTINEL_DIR|g" \
     -e "s|{{CHECK_INTERVAL}}|$CHECK_INTERVAL|g" \
     -e "s|{{CONFIG_FILE}}|$CONFIG_FILE|g" \
     "$SCRIPT_DIR/launchd/ai.openclaw.sentinel.plist.template" > "$LAUNCHD_PLIST"
-echo -e "${GREEN}✓${NC} Created launchd service"
+echo -e "${GREEN}✓${NC} Created launchd health service"
 
-# Load the service
+# Generate backup launchd plist from template
+sed -e "s|{{SENTINEL_DIR}}|$SENTINEL_DIR|g" \
+    -e "s|{{LOG_DIR}}|$LOG_DIR|g" \
+    -e "s|{{HOME}}|$HOME|g" \
+    -e "s|{{BACKUP_SCHEDULE_HOUR}}|$BACKUP_HOUR|g" \
+    -e "s|{{CONFIG_FILE}}|$CONFIG_FILE|g" \
+    "$SCRIPT_DIR/launchd/ai.openclaw.sentinel.backup.plist.template" > "$LAUNCHD_BACKUP_PLIST"
+echo -e "${GREEN}✓${NC} Created launchd backup service"
+
+# Load the services
 launchctl load "$LAUNCHD_PLIST"
-echo -e "${GREEN}✓${NC} Started Sentinel service"
+echo -e "${GREEN}✓${NC} Started Sentinel health service"
+
+launchctl load "$LAUNCHD_BACKUP_PLIST"
+echo -e "${GREEN}✓${NC} Started Sentinel backup service"
 
 # =============================================================================
 # SHELL ALIASES (optional)
@@ -239,8 +275,19 @@ sentinel() {
         repairs)
             tail -f ~/.openclaw/sentinel/logs/repairs.log
             ;;
+        backup)
+            shift
+            ~/.openclaw/sentinel/backup.sh "$@"
+            ;;
         *)
-            echo "Usage: sentinel {status|check|logs|repairs}"
+            echo "Usage: sentinel {status|check|logs|repairs|backup}"
+            echo ""
+            echo "Backup commands:"
+            echo "  sentinel backup              Create a backup"
+            echo "  sentinel backup --full       Create a full backup (all tiers)"
+            echo "  sentinel backup list         List available backups"
+            echo "  sentinel backup restore ...  Restore from a backup"
+            echo "  sentinel backup prune        Remove old backups"
             ;;
     esac
 }
@@ -276,7 +323,9 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 echo "Configuration:  $CONFIG_FILE"
 echo "Logs:           $LOG_DIR/"
+echo "Backups:        $BACKUP_DIR/"
 echo "Check interval: Every $CHECK_INTERVAL seconds"
+echo "Backup time:    Daily at ${BACKUP_HOUR}:00"
 echo ""
 echo "Commands:"
 echo "  sentinel status   - Check service status"
@@ -284,6 +333,15 @@ echo "  sentinel check    - Manually trigger health check"
 echo "  sentinel logs     - View health logs"
 echo "  sentinel repairs  - View repair logs"
 echo ""
+echo "Backup commands:"
+echo "  sentinel backup             - Create a backup now"
+echo "  sentinel backup --full      - Create a full backup (all tiers)"
+echo "  sentinel backup list        - List available backups"
+echo "  sentinel backup restore ... - Restore from a backup"
+echo "  sentinel backup prune       - Remove old backups"
+echo ""
 echo "To modify settings, edit: $CONFIG_FILE"
-echo "Then restart: launchctl unload $LAUNCHD_PLIST && launchctl load $LAUNCHD_PLIST"
+echo "Then restart services:"
+echo "  launchctl unload $LAUNCHD_PLIST && launchctl load $LAUNCHD_PLIST"
+echo "  launchctl unload $LAUNCHD_BACKUP_PLIST && launchctl load $LAUNCHD_BACKUP_PLIST"
 echo ""

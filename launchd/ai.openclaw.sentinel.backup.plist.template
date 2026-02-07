@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.sentinel.backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>{{SENTINEL_DIR}}/backup.sh create &amp;&amp; {{SENTINEL_DIR}}/backup.sh prune</string>
+    </array>
+
+    <!-- Run daily at configured hour -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>{{BACKUP_SCHEDULE_HOUR}}</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Log output -->
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/backup-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/backup-stderr.log</string>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>{{HOME}}/.openclaw</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:{{HOME}}/.local/bin</string>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+        <key>SENTINEL_DIR</key>
+        <string>{{SENTINEL_DIR}}</string>
+        <key>CONFIG_FILE</key>
+        <string>{{CONFIG_FILE}}</string>
+    </dict>
+
+    <!-- Don't restart immediately if it exits -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

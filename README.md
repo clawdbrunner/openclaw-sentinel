@@ -57,6 +57,15 @@ CONFIRMATION_DELAY=5
 
 # Maximum age of lock file before considering it stale (seconds)
 MAX_LOCK_AGE=1800
+
+# --- Backup ---
+BACKUP_ENABLED=true
+BACKUP_DIR="$HOME/.openclaw/sentinel/backups"
+BACKUP_SCHEDULE_HOUR=3          # Daily backup at 03:00
+BACKUP_TIER_WORKSPACE=true      # Include workspace/ in backups
+BACKUP_TIER_EXTENDED=false      # Include agents/, skills, scripts
+MAX_BACKUPS=14                  # Retain this many backups
+BACKUP_BEFORE_UPGRADE=true      # Backup before upgrades
 ```
 
 ## Usage
@@ -75,6 +84,28 @@ sentinel logs
 
 # View repair history
 sentinel repairs
+```
+
+### Backup Commands
+
+```bash
+# Create a backup with configured tiers
+sentinel backup
+
+# Create a full backup (all tiers)
+sentinel backup --full
+
+# List all available backups
+sentinel backup list
+
+# Restore from the most recent backup
+sentinel backup restore --latest
+
+# Restore from a specific backup
+sentinel backup restore openclaw-backup-20260206-030000.tar.gz
+
+# Remove old backups (keeps MAX_BACKUPS most recent)
+sentinel backup prune
 ```
 
 These commands are installed as aliases. You can also run the scripts directly:
@@ -104,6 +135,44 @@ launchctl unload ~/Library/LaunchAgents/ai.openclaw.sentinel.plist
 launchctl load ~/Library/LaunchAgents/ai.openclaw.sentinel.plist
 ```
 
+## Backup System
+
+Sentinel includes an automated backup system that protects your OpenClaw configuration.
+
+### What Gets Backed Up
+
+Backups are organized into three tiers:
+
+| Tier | Contents | Default |
+|------|----------|---------|
+| **Core** (always) | `openclaw.json`, `credentials/`, `sentinel.conf` | on |
+| **Workspace** | `workspace/` (AGENTS.md, SOUL.md, memory/, etc.) | on |
+| **Extended** | `agents/`, `skills/`, custom `scripts/` | off |
+
+These are **never** backed up: `logs/`, `node_modules/`, `.git/`, lock files.
+
+### Backup Format
+
+- Backups are timestamped gzipped tarballs: `openclaw-backup-YYYYMMDD-HHMMSS.tar.gz`
+- Stored in `~/.openclaw/sentinel/backups/` by default
+- Each backup includes a `manifest.json` with metadata (timestamp, OpenClaw version, file list, config checksum)
+- Backups are created with `chmod 600` (contains credentials)
+
+### Scheduled Backups
+
+Backups run automatically via launchd:
+- Default: Daily at 03:00 (configurable via `BACKUP_SCHEDULE_HOUR`)
+- Automatically prunes old backups beyond `MAX_BACKUPS`
+
+### Restore Behavior
+
+When restoring a backup:
+1. Gateway is stopped
+2. Current state is saved as a "pre-restore" backup (safety net)
+3. Files are extracted and validated
+4. `openclaw doctor` runs to verify configuration
+5. Gateway is restarted
+
 ## Logs
 
 All logs are stored in `~/.openclaw/sentinel/logs/`:
@@ -112,8 +181,11 @@ All logs are stored in `~/.openclaw/sentinel/logs/`:
 |------|----------|
 | `health.log` | Health check results and status changes |
 | `repairs.log` | Detailed Claude Code repair session outputs |
-| `launchd-stdout.log` | Standard output from launchd |
-| `launchd-stderr.log` | Standard error from launchd |
+| `backup.log` | Backup creation, restore, and prune operations |
+| `launchd-stdout.log` | Standard output from launchd (health) |
+| `launchd-stderr.log` | Standard error from launchd (health) |
+| `backup-stdout.log` | Standard output from launchd (backup) |
+| `backup-stderr.log` | Standard error from launchd (backup) |
 
 ## How Claude Code Repairs Work
 
