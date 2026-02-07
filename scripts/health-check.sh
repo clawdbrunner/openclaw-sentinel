@@ -448,7 +448,7 @@ trigger_repair() {
     issue_fingerprint=$(generate_issue_fingerprint "$doctor_output" "$doctor_exit")
     LAST_ISSUE_FP="$issue_fingerprint"
     log "Issue fingerprint: $issue_fingerprint"
-    notify_event "start" "OpenClaw Sentinel: repair started on $(hostname). Issue=${LAST_ISSUE_FP}. Doctor exit=${doctor_exit}. Gateway=${GATEWAY_URL}."
+    notify_event "start" "🟡 OpenClaw Sentinel: repair started on $(hostname). Issue=${LAST_ISSUE_FP}. Doctor exit=${doctor_exit}. Gateway=${GATEWAY_URL}."
 
     # First, try auto-fix for common issues
     if try_auto_fix "$doctor_output"; then
@@ -679,10 +679,10 @@ main() {
 
     if check_gateway; then
         log "Repair successful - gateway is now responding"
-        notify_event "success" "OpenClaw Sentinel: repair succeeded on $(hostname). Type=${LAST_REPAIR_TYPE:-unknown}. Issue=${LAST_ISSUE_FP:-unknown}. Cost=\$${LAST_REPAIR_COST:-0} Turns=${LAST_REPAIR_TURNS:-null}."
+        notify_event "success" "🟢 OpenClaw Sentinel: repair succeeded on $(hostname). Type=${LAST_REPAIR_TYPE:-unknown}. Issue=${LAST_ISSUE_FP:-unknown}. Cost=\$${LAST_REPAIR_COST:-0} Turns=${LAST_REPAIR_TURNS:-null}."
     else
         log "Repair attempt completed but gateway still not responding"
-        notify_event "failure" "OpenClaw Sentinel: repair failed on $(hostname). Type=${LAST_REPAIR_TYPE:-unknown}. Issue=${LAST_ISSUE_FP:-unknown}. Exit=${LAST_REPAIR_EXIT:-unknown}. Gateway still unhealthy."
+        notify_event "failure" "🔴 OpenClaw Sentinel: repair failed on $(hostname). Type=${LAST_REPAIR_TYPE:-unknown}. Issue=${LAST_ISSUE_FP:-unknown}. Exit=${LAST_REPAIR_EXIT:-unknown}. Gateway still unhealthy."
     fi
     
     # Log repair statistics summary
