@@ -75,6 +75,27 @@ UPGRADE_SCHEDULE="weekly"       # "weekly" (Sunday 04:00) or "daily"
 UPGRADE_AUTO_APPLY=false        # Auto-apply updates (if false, only notifies)
 ```
 
+## Notifications
+
+Sentinel can call any notification command when repairs start, succeed, or fail.
+Set `NOTIFY_CMD` in `~/.openclaw/sentinel.conf` to enable.
+
+```bash
+# Direct Telegram script example (message is appended as final arg)
+NOTIFY_CMD="/path/to/send_telegram_message.sh"
+
+# OpenClaw CLI example
+NOTIFY_CMD="openclaw message send --channel telegram --target 177792366 --message"
+
+# Notification mode: "arg" (default) or "stdin"
+NOTIFY_MODE="arg"
+
+# Per-event toggles (1=on, 0=off)
+NOTIFY_ON_START=1
+NOTIFY_ON_SUCCESS=1
+NOTIFY_ON_FAILURE=1
+```
+
 ## Usage
 
 ### Check Installed Version
